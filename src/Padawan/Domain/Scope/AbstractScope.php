@@ -35,6 +35,7 @@ abstract class AbstractScope implements Scope
         $this->variables[$var->getName()] = $var;
     }
 
+    /** @return FunctionData[] */
     public function getFunctions()
     {
         return $this->functions;

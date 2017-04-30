@@ -4,7 +4,7 @@ namespace Padawan\Domain\Project;
 
 class Chain
 {
-    public function __construct(Chain $child = null, $name = "", $type = "")
+    public function __construct(Chain $child = null, $name = '', $type = '')
     {
         $this->child = $child;
         $this->name = $name;
@@ -14,11 +14,17 @@ class Chain
         }
     }
 
+    /**
+     * @return string
+     */
     public function getName()
     {
         return $this->name;
     }
 
+    /**
+     * @return string
+     */
     public function getType()
     {
         return $this->type;
@@ -45,8 +51,12 @@ class Chain
         $this->parent = $parent;
     }
 
+    /** @var string */
     private $type;
+    /** @var string */
     private $name;
+    /** @var Chain|null */
     private $parent;
+    /** @var Chain|null */
     private $child;
 }

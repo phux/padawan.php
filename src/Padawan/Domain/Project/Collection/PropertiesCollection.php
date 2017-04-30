@@ -14,14 +14,20 @@ class PropertiesCollection
     {
         $this->class = $class;
     }
+
     public function add(ClassProperty $prop)
     {
         $this->map[$prop->name] = $prop;
     }
+
+    /**
+     * @param Specification $spec
+     * @return array
+     */
     public function all(Specification $spec = null)
     {
         if ($spec === null) {
-            $spec = new Specification;
+            $spec = new Specification();
         }
         $props = [];
         foreach ($this->map as $prop) {
@@ -42,8 +48,15 @@ class PropertiesCollection
             );
         }
         ksort($props);
+
         return $props;
     }
+
+    /**
+     * @param string $propName
+     * @param Specification $spec
+     * @return null|mixed
+     */
     public function get($propName, Specification $spec = null)
     {
         if ($spec === null) {
@@ -54,6 +67,7 @@ class PropertiesCollection
             if ($spec->satisfy($prop)) {
                 return $prop;
             }
+
             return null;
         }
         $parent = $this->class->getParent();
@@ -69,6 +83,7 @@ class PropertiesCollection
         }
     }
 
+    /** @var array */
     private $map = [];
     /** @var ClassData */
     private $class;

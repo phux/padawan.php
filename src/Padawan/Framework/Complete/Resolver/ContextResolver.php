@@ -40,6 +40,7 @@ class ContextResolver
             $token->getSymbol(),
             $token->getType()
         ));
+
         return $this->createContext($scope, $token, $badLine, $index);
     }
 
@@ -61,6 +62,13 @@ class ContextResolver
         return $token;
     }
 
+    /**
+     * @param Scope $scope
+     * @param Token $token
+     * @param string $badLine
+     * @param Index $index
+     * @return Context
+     */
     protected function createContext(Scope $scope, Token $token, $badLine, Index $index)
     {
         $context = new Context($scope, $token);
@@ -102,6 +110,7 @@ class ContextResolver
         return $context;
     }
 
+    /** @return Token */
     protected function addSymbolForToken($symbol, Token $token = null)
     {
         if (is_array($symbol)) {
@@ -118,6 +127,11 @@ class ContextResolver
         return $token;
     }
 
+    /**
+     * @param string $badLine
+     * @param bool $wrapFunctionCall
+     * @return string
+     */
     protected function prepareLine($badLine, $wrapFunctionCall = true)
     {
         if (strpos($badLine, '<?php') === false

@@ -29,6 +29,12 @@ class Parser
         $this->astPool          = [];
         $this->logger           = $logger;
     }
+    /**
+     * @param $file
+     * @param string $content
+     * @param Uses $uses
+     * @return array|null
+     */
     public function parseContent($file, $content, Uses $uses = null)
     {
         if (!$uses instanceof Uses) {

@@ -9,7 +9,6 @@ use Padawan\Domain\Project\Node\ClassData;
 use Padawan\Domain\Project\Node\FunctionData;
 use Padawan\Domain\Project\Node\InterfaceData;
 
-
 class InMemoryIndex implements Index
 {
     private $files              = [];
@@ -19,18 +18,21 @@ class InMemoryIndex implements Index
     private $extends            = [];
     private $implements         = [];
     private $functions          = [];
-
+    private $flippedClassMap    = [];
     /** @var Index $coreIndex */
     private static $coreIndex;
 
+    /** @return array */
     public function getFQCNs()
     {
         return $this->fqcns;
     }
 
+    /** @return aray */
     public function getImplements() {
         return $this->implements;
     }
+    /** @return array */
     public function getExtends() {
         return $this->extends;
     }
@@ -44,10 +46,12 @@ class InMemoryIndex implements Index
         foreach ($scope->getClasses() as $classData) {
             $this->addFQCN($classData->fqcn);
             $this->addClass($classData);
+            $this->addFQCNFileMapping($classData->fqcn, $classData->file);
         }
         foreach ($scope->getInterfaces() as $interfaceData) {
             $this->addFQCN($interfaceData->fqcn);
             $this->addInterface($interfaceData);
+            $this->addFQCNFileMapping($interfaceData->fqcn, $interfaceData->file);
         }
         foreach ($scope->getFunctions() as $functionData) {
             $this->addFunction($functionData);
@@ -216,6 +220,14 @@ class InMemoryIndex implements Index
         $this->fqcns[$fqcn->toString()] = $fqcn;
     }
 
+    /**
+     * @param FQCN $fqcn
+     * @param string $file
+     */
+    protected function addFQCNFileMapping(FQCN $fqcn, $file) {
+        $this->flippedClassMap[$file] = $fqcn->toString();
+    }
+
     protected function addExtend(ClassData $class, FQCN $parent) {
         $this->findClassChildren($parent);
         $this->extends[$parent->toString()][$class->fqcn->toString()] = $class;
@@ -234,6 +246,7 @@ class InMemoryIndex implements Index
         }
     }
 
+    /** @return bool */
     private function hasCoreIndex()
     {
         return $this !== self::$coreIndex && !empty(self::$coreIndex);

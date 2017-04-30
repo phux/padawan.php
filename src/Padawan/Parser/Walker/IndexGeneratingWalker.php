@@ -55,6 +55,8 @@ class IndexGeneratingWalker extends NodeVisitorAbstract implements WalkerInterfa
     {
         $this->index = $index;
     }
+
+    /** @return int|null */
     public function enterNode(Node $node)
     {
         if ($node instanceof Class_) {

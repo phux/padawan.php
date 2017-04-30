@@ -57,10 +57,17 @@ class ClassData
         return $this->interfaces;
     }
 
+    /**
+     * @return string
+     */
     public function getName()
     {
         return $this->fqcn->getClassName();
     }
+
+    /**
+     * @param ClassData $parent
+     */
     public function setParent($parent)
     {
         if ($this === $parent) {

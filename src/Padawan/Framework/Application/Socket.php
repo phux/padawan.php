@@ -10,6 +10,7 @@ use Padawan\Command\CompleteCommand;
 use Padawan\Command\UpdateCommand;
 use Symfony\Component\Console\Input\ArrayInput;
 use Padawan\Framework\Application\Socket\HttpOutput;
+use Padawan\Command\NavigateCommand;
 
 /**
  * Class Socket
@@ -55,6 +56,7 @@ class Socket extends Application
         $this->add(new UpdateCommand);
         $this->add(new ListCommand);
         $this->add(new KillCommand);
+        $this->add(new NavigateCommand);
     }
 
 }
