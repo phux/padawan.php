@@ -7,21 +7,18 @@ use Symfony\Component\Console\Input\InputArgument;
 use Padawan\Framework\Application\Socket\HttpOutput;
 use Padawan\Domain\ProjectRepository;
 use Padawan\Domain\Project;
-use Padawan\Domain\Scope\FileScope;
-use Padawan\Domain\Project\FQN;
 use Padawan\Domain\Project\File;
 use Padawan\Parser\Parser;
 use Padawan\Parser\Walker\IndexGeneratingWalker;
 use Padawan\Domain\Generator\IndexGenerator;
 use Padawan\Parser\Walker\ScopeWalker;
 use Padawan\Domain\Project\Node\ClassData;
-use Padawan\Framework\Complete\Resolver\ContextResolver;
 use Padawan\Domain\Project\Index;
 use Padawan\Domain\Scope;
-use Padawan\Domain\Completion\Context;
 use Padawan\Domain\Project\Node\InterfaceData;
 use Padawan\Domain\Scope\AbstractChildScope;
 use Padawan\Domain\Scope\ClassScope;
+use Padawan\Framework\File\ContentProcessor;
 
 class NavigateCommand extends AsyncCommand
 {
@@ -105,14 +102,9 @@ class NavigateCommand extends AsyncCommand
         $navigationType
     ) {
         $scope = $this->processScopeByFileContent($line, $content, $column, $project, $file);
-        $lines = explode("\n", $content);
         /* @var $currentClass \Padawan\Domain\Project\Node\ClassData  */
         $currentClass = $this->findCurrentClass($project, $file, $scope);
-        if (!$currentClass instanceof ClassData || !$currentClass instanceof InterfaceData) {
-            $line = 0;
-            $scope = $this->processScopeByFileContent($line, $content, $column, $project, $file);
-            $currentClass = $this->findCurrentClass($project, $file, $scope);
-        }
+
         switch ($navigationType) {
             case self::NAVIGATION_TYPE_PARENTS:
                 return $this->findParents($currentClass);
@@ -140,25 +132,20 @@ class NavigateCommand extends AsyncCommand
         $result = [
             'children' => $children,
         ];
-        if (!$currentClass instanceof ClassData && !$currentClass instanceof InterfaceData) {
-            return $result;
-        }
 
         $items = [];
         if ($currentClass instanceof ClassData) {
             $items = $projectIndex->findClassChildren($currentClass->fqcn);
+        } elseif ($currentClass instanceof InterfaceData) {
+            $items = $projectIndex->findInterfaceChildrenClasses($currentClass->fqcn);
         }
-        if ($currentClass instanceof InterfaceData) {
-            $items += $projectIndex->findInterfaceChildrenClasses($currentClass->fqcn);
-        }
-        if ($items) {
-            foreach ($items as $item) {
-                $result['children'][] = [
-                    'name' => $item->fqcn->getClassName(),
-                    'fqcn' => $item->fqcn->toString(),
-                    'file' => $item->file,
-                ];
-            }
+
+        foreach ($items as $item) {
+            $result['children'][] = [
+                'name' => $item->fqcn->getClassName(),
+                'fqcn' => $item->fqcn->toString(),
+                'file' => $item->file,
+            ];
         }
 
         return $result;
@@ -210,26 +197,7 @@ class NavigateCommand extends AsyncCommand
      */
     private function processScopeByFileContent($line, $content, $column, Project $project, $file)
     {
-        $scope = null;
-        if ($line) {
-            list($lines) = $this->prepareContent(
-                $content,
-                $line,
-                $column
-            );
-            try {
-                $scope = $this->processFileContent($project, $lines, $line, $file);
-                if (empty($scope)) {
-                    $scope = new FileScope(new FQN());
-                }
-            } catch (\Exception $e) {
-                $scope = new FileScope(new FQN());
-            }
-        } elseif (!empty($content)) {
-            $scope = $this->processFileContent($project, $content, $line, $file);
-        }
-
-        return $scope;
+        return $this->getContainer()->get(ContentProcessor::class)->processFileContent($project, $content, $line, $file);
     }
 
     /**
@@ -241,6 +209,45 @@ class NavigateCommand extends AsyncCommand
      */
     protected function findCurrentClass(Project $project, $path, Scope $scope)
     {
+        $class = $this->extractClassFromScope($scope);
+        if ($class) {
+            return $class;
+        }
+
+        $index = $project->getIndex();
+        /** @var File $file */
+        $file = $index->findFileByPath($path);
+        if (!$file) {
+            return;
+        }
+        $interface = $this->extractInterfaceFromFileScope($file);
+        if ($interface) {
+            return $interface;
+        }
+
+        $fqcn = $index->findFQCNByFile($file->path());
+        if (!$fqcn) {
+            return;
+        }
+        $class = $index->findClassByFQCN($fqcn);
+
+        return $class;
+    }
+
+    private function extractInterfaceFromFileScope(File $file)
+    {
+        if ($file->scope()
+            && empty($file->scope()->getClasses())
+            && count($file->scope()->getInterfaces()) === 1
+        ) {
+            $interfaces = $file->scope()->getInterfaces();
+
+            return array_pop($interfaces);
+        }
+    }
+
+    private function extractClassFromScope($scope)
+    {
         if ($scope instanceof ClassScope) {
             return $scope->getClass();
         }
@@ -250,29 +257,6 @@ class NavigateCommand extends AsyncCommand
                 return $scope->getClass();
             }
         }
-
-        // interface?
-        $index = $project->getIndex();
-        /** @var File $file */
-        $file = $index->findFileByPath($path);
-        if (!$file) {
-            return;
-        }
-        if ($file->scope()
-            && empty($file->scope()->getClasses())
-            && count($file->scope()->getInterfaces()) === 1
-        ) {
-            $interfaces = $file->scope()->getInterfaces();
-            return array_pop($interfaces);
-        }
-        // fallback
-        $fqcn = $index->findFQCNByFile($file->path());
-        if (!$fqcn) {
-            return;
-        }
-        $class = $index->findClassByFQCN($fqcn);
-
-        return $class;
     }
 
     /**
@@ -296,80 +280,6 @@ class NavigateCommand extends AsyncCommand
         return [$lines, trim($badLine), trim($completionLine)];
     }
 
-    /**
-     * @param Project      $project
-     * @param array|string $lines
-     * @param int          $line
-     * @param sring        $filePath
-     *
-     * @return Scope|null
-     */
-    protected function processFileContent(Project $project, $lines, $line, $filePath)
-    {
-        if (is_array($lines)) {
-            $content = implode("\n", $lines);
-        } else {
-            $content = $lines;
-        }
-        if (empty($content)) {
-            return;
-        }
-        if (!array_key_exists($filePath, $this->cachePool)) {
-            $this->cachePool[$filePath] = [0, [], []];
-        }
-        if ($this->isValidCache($filePath, $content)) {
-            list(, $fileScope, $scope) = $this->cachePool[$filePath];
-        }
-        $index = $project->getIndex();
-        $file = $index->findFileByPath($filePath);
-
-        $hash = sha1($content);
-        if (empty($file)) {
-            $file = new File($filePath);
-        }
-        if (empty($scope)) {
-            $parser = $this->getContainer()->get(Parser::class);
-            $parser->addWalker($this->getContainer()->get(IndexGeneratingWalker::class));
-            $this->generator = $this->getContainer()->get(IndexGenerator::class);
-            $parser->setIndex($project->getIndex());
-            $fileScope = $parser->parseContent($filePath, $content);
-            $this->generator->processFileScope(
-                $file,
-                $project->getIndex(),
-                $fileScope,
-                $hash
-            );
-            /** @var \Padawan\Domain\Project\Node\Uses */
-            $uses = $parser->getUses();
-            $this->scopeWalker = $this->getContainer()->get(ScopeWalker::class);
-            $this->scopeWalker->setLine($line);
-            $parser->addWalker($this->scopeWalker);
-            $parser->setIndex($project->getIndex());
-            $scope = $parser->parseContent($filePath, $content, $uses);
-            $contentHash = hash('sha1', $content);
-            $this->cachePool[$filePath] = [$contentHash, $fileScope, $scope];
-        }
-        if ($scope) {
-            return $scope;
-        }
-
-        return;
-    }
-
-    /**
-     * @param string $file
-     * @param string $content
-     *
-     * @return bool
-     */
-    private function isValidCache($file, $content)
-    {
-        $contentHash = hash('sha1', $content);
-        list($hash) = $this->cachePool[$file];
-
-        return $hash === $contentHash;
-    }
-
     /** @var Parser */
     private $parser;
     /** @property IndexGenerator */
@@ -380,7 +290,6 @@ class NavigateCommand extends AsyncCommand
     private $indexGeneratingWalker;
     /** @property ScopeWalker */
     private $scopeWalker;
-    private $cachePool = [];
     /** @var LoggerInterface */
     private $logger;
 }
