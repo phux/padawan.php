@@ -22,6 +22,7 @@ use PhpParser\Node;
 use PhpParser\Node\Expr\Variable as NodeVar;
 use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Stmt\Use_;
+use PhpParser\Node\Stmt\Catch_;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Expr\Closure;
@@ -55,7 +56,10 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
             $this->createScopeFromMethod($node);
         } elseif ($node instanceof Closure) {
             $this->createScopeFromClosure($node);
-        } elseif ($node instanceof Assign) {
+        } elseif ($node instanceof Assign
+            || $node instanceof Catch_
+            || $node instanceof NodeVar
+        ) {
             $this->addVarToScope($node);
         }
     }
@@ -119,7 +123,12 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
     public function createScopeFromClosure(Closure $node)
     {
         $scope = $this->scope;
-        $this->scope = new ClosureScope($scope);
+        $classData = null;
+        if (!$node->static && $scope instanceof MethodScope) {
+            $index = $this->getIndex();
+            $classData = $index->findClassByFQCN($scope->getClass()->fqcn);
+        }
+        $this->scope = new ClosureScope($scope, $classData);
         foreach ($node->params as $param) {
             $this->scope->addVar(
                 $this->paramParser->parse($param)
@@ -152,23 +161,41 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
         }
         $this->scope = new MethodScope($classScope, $method);
     }
-    public function addVarToScope(Assign $node)
+    public function addVarToScope($node)
     {
-        if (!$node->var instanceof NodeVar) {
-            return;
+        if ($node instanceof Assign) {
+            if (!$node->var instanceof NodeVar) {
+                return;
+            }
+            $var = new Variable($node->var->name);
+        } elseif ($node instanceof Catch_) {
+            $var = new Variable($node->var);
+        } elseif ($node instanceof NodeVar) {
+            $var = new Variable($node->name);
         }
-        $var = new Variable($node->var->name);
+
         $comment = $this->commentParser->parse($node->getAttribute('comments'));
-        if ($comment->getVar($var->getName())) {
+        if ($node instanceof Catch_ && count($node->types) === 1) {
+            $type = $this->useParser->getFQCN($node->types[0]);
+        } elseif ($comment->getVar($var->getName())) {
             $type = $comment->getVar($var->getName())->getType();
-        } else {
+        } elseif (isset($node->expr)) {
             $type = $this->typeResolver->getType(
                 $node->expr,
                 $this->getIndex(),
                 $this->scope
             );
         }
-        $var->setType($type);
+
+        $current = $this->scope->getVar($var->getName());
+        if (!isset($type) && $current && $current->getType()) {
+            return;
+        }
+
+        if (isset($type)) {
+            $var->setType($type);
+        }
+
         $this->scope->addVar($var);
     }
     public function parseUse(Use_ $node, $fqcn, $file)

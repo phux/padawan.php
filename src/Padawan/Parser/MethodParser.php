@@ -67,6 +67,13 @@ class MethodParser {
         foreach ($variables as $variable) {
             $method->addVar($variable);
         }
+        if (isset($node->returnType)) {
+            if ($node->returnType instanceof Name) {
+                $method->return = $this->useParser->getFQCN($node->returnType);
+            } else {
+                $method->return = $node->returnType;
+            }
+        }
         return $method;
     }
     protected function parseMethodArgument(Param $node) {
