@@ -11,6 +11,7 @@ use Padawan\Domain\Project\Index;
 use Padawan\Domain\Project\Node\Uses;
 use Padawan\Domain\Project\Node\Variable;
 use Padawan\Domain\Scope;
+use Padawan\Domain\Scope\AbstractChildScope;
 use Padawan\Domain\Scope\FileScope;
 use Padawan\Domain\Scope\FunctionScope;
 use Padawan\Domain\Scope\MethodScope;
@@ -21,11 +22,18 @@ use PhpParser\NodeVisitorAbstract;
 use PhpParser\Node;
 use PhpParser\Node\Expr\Variable as NodeVar;
 use PhpParser\Node\Expr\Assign;
+use PhpParser\Node\Expr\ArrayItem;
 use PhpParser\Node\Stmt\Use_;
 use PhpParser\Node\Stmt\Foreach_;
+use PhpParser\Node\Expr\List_;
+use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Stmt\Catch_;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
+use PhpParser\Node\Stmt\Function_;
+use PhpParser\Node\Stmt\Global_;
+use PhpParser\Node\Stmt\StaticVar;
+use PhpParser\Node\Stmt\Unset_;
 use PhpParser\Node\Expr\Closure;
 
 class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
@@ -55,14 +63,21 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
             $this->createScopeFromClass($node);
         } elseif ($node instanceof ClassMethod) {
             $this->createScopeFromMethod($node);
+        } elseif ($node instanceof Function_) {
+            $this->createScopeFromFunction($node);
         } elseif ($node instanceof Closure) {
             $this->createScopeFromClosure($node);
         } elseif ($node instanceof Assign
+            || $node instanceof StaticVar
             || $node instanceof Catch_
             || $node instanceof Foreach_
+            || $node instanceof Global_
             || $node instanceof NodeVar
         ) {
             $this->addVarToScope($node);
+        } elseif ($node instanceof Unset_) {
+            $this->removeVarFromScope($node);
+            return NodeTraverser::DONT_TRAVERSE_CHILDREN;
         }
     }
     public function leaveNode(Node $node)
@@ -86,9 +101,10 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
     public function isIn($node, $line)
     {
         list($startLine, $endLine) = $this->getNodeLines($node);
-        if ($node instanceof ClassMethod
+        if ($node instanceof Class_
+            || $node instanceof ClassMethod
+            || $node instanceof Function_
             || $node instanceof Closure
-            || $node instanceof Class_
         ) {
             return $line >= $startLine && $line <= $endLine;
         }
@@ -163,17 +179,60 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
         }
         $this->scope = new MethodScope($classScope, $method);
     }
+    public function createScopeFromFunction(Function_ $node)
+    {
+        $scope = $this->scope;
+        $index = $this->getIndex();
+        if (empty($index)) {
+            return;
+        }
+        $function = $index->findFunctionByName($node->name);
+        if (empty($function)) {
+            return;
+        }
+        $this->scope = new FunctionScope($scope, $function);
+    }
+    /**
+     * @param Global_|Assign|Catch_|Foreach_|StaticVar|NodeVar $node
+     */
     public function addVarToScope($node)
     {
-        if ($node instanceof Assign) {
-            if (!$node->var instanceof NodeVar) {
+        if ($node instanceof Global_) {
+            $parent = $this->scope;
+            while ($parent instanceof AbstractChildScope) {
+                $parent = $parent->getParent();
+            }
+            foreach ($node->vars as $nodeVar) {
+                $var = $parent->getVar($nodeVar->name);
+                if ($var) {
+                    $this->scope->addVar($var);
+                }
+            }
+            return;
+        }
+
+        if ($node instanceof Assign
+            || $node instanceof StaticVar
+            || $node instanceof Foreach_
+        ) {
+            if (isset($node->var)) {
+                $nodeVar = $node->var;
+            } elseif (isset($node->valueVar)) {
+                $nodeVar = $node->valueVar;
+            } elseif (isset($node->name)) {
+                $nodeVar = new NodeVar($node->name);
+            }
+
+            if ($nodeVar instanceof List_ || $nodeVar instanceof Array_) {
+                return $this->addListToScope($nodeVar, $node);
+            }
+            if (!isset($nodeVar->name)) {
                 return;
             }
-            $var = new Variable($node->var->name);
+
+            $var = new Variable($nodeVar->name);
         } elseif ($node instanceof Catch_) {
             $var = new Variable($node->var);
-        } elseif ($node instanceof Foreach_) {
-            $var = new Variable($node->valueVar->name);
         } elseif ($node instanceof NodeVar) {
             $var = new Variable($node->name);
         }
@@ -183,9 +242,10 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
             $type = $this->useParser->getFQCN($node->types[0]);
         } elseif ($comment->getVar($var->getName())) {
             $type = $comment->getVar($var->getName())->getType();
-        } elseif (isset($node->expr)) {
+        } elseif (isset($node->expr) || isset($node->default)) {
+            $expr = isset($node->expr) ? $node->expr : $node->default;
             $type = $this->typeResolver->getType(
-                $node->expr,
+                $expr,
                 $this->getIndex(),
                 $this->scope
             );
@@ -197,10 +257,10 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
         }
 
         if ($node instanceof Foreach_) {
-            if (!isset($type) || !$type->isArray()) {
+            if (!isset($type) || !$type instanceof FQCN || !$type->isArray()) {
                 return;
             }
-            $type = new FQCN($type->className, $type->namespace, false);
+            $type = new FQCN($type->className, $type->namespace, $type->getDimension() - 1);
         }
 
         if (isset($type)) {
@@ -208,6 +268,53 @@ class ScopeWalker extends NodeVisitorAbstract implements WalkerInterface
         }
 
         $this->scope->addVar($var);
+    }
+    /**
+     * @param List_|Array_    $list
+     * @param Assign|Foreach_ $parent
+     */
+    public function addListToScope($list, $parent, $level = 1)
+    {
+        $comment = $this->commentParser->parse($parent->getAttribute('comments'));
+        if ($parent->expr instanceof NodeVar && $comment->getVar($parent->expr->name)) {
+            $type = $comment->getVar($parent->expr->name)->getType();
+        } else {
+            $type = $this->typeResolver->getType(
+                $parent->expr,
+                $this->getIndex(),
+                $this->scope
+            );
+        }
+
+        if (!isset($type) || !$type instanceof FQCN || !$type->isArray()) {
+            return;
+        }
+
+        foreach ($list->items as $item) {
+            if (!isset($item->value)) {
+                continue;
+            }
+            if ($item->value instanceof List_ || $item->value instanceof Array_) {
+                $this->addListToScope($item->value, $parent, $level + 1);
+                continue;
+            }
+            if ($item->value instanceof NodeVar) {
+                $var = new Variable($item->value->name);
+                $var->setType(new FQCN($type->className, $type->namespace, $type->getDimension() - $level));
+                $this->scope->addVar($var);
+            }
+        }
+    }
+    public function removeVarFromScope(Unset_ $node)
+    {
+        foreach ($node->vars as $expr) {
+            if ($expr instanceof NodeVar) {
+                $var = $this->scope->getVar($expr->name);
+                if ($var) {
+                    $this->scope->removeVar($var);
+                }
+            }
+        }
     }
     public function parseUse(Use_ $node, $fqcn, $file)
     {

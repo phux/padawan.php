@@ -18,6 +18,7 @@ use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\Closure;
 use PhpParser\Node\Expr\New_;
+use PhpParser\Node\Expr\Clone_;
 use PhpParser\Node\Expr\BooleanNot;
 use PhpParser\Node\Expr\Isset_;
 use PhpParser\Node\Expr\Print_;
@@ -26,6 +27,7 @@ use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\Empty_;
 use PhpParser\Node\Expr\ShellExec;
 use PhpParser\Node\Expr\Cast;
+use PhpParser\Node\Expr\ErrorSuppress;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Scalar\Encapsed;
 use PhpParser\Node\Scalar\MagicConst;
@@ -75,6 +77,11 @@ class NodeTypeResolver
         }
         if ($node instanceof New_ && $node->class instanceof Name) {
             return $this->useParser->getFQCN($node->class);
+        }
+        if ($node instanceof Clone_
+            || $node instanceof ErrorSuppress
+        ) {
+            return $this->getType($node->expr, $index, $scope);
         }
         if ($node instanceof Closure) {
             return new FQCN('Closure');
