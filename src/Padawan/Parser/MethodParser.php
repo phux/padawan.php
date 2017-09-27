@@ -7,7 +7,6 @@ use Padawan\Domain\Project\Node\MethodParam;
 use Padawan\Domain\Project\Node\Comment;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Param;
-use PhpParser\Node\Name;
 
 class MethodParser {
 
@@ -20,13 +19,15 @@ class MethodParser {
         UseParser $useParser,
         CommentParser $commentParser,
         ParamParser $paramParser,
-        InlineDocBlockParser $inlineDocBlockParser
+        InlineDocBlockParser $inlineDocBlockParser,
+        ReturnTypeParser $returnTypeParser
     )
     {
-        $this->useParser            = $useParser;
-        $this->commentParser        = $commentParser;
-        $this->paramParser          = $paramParser;
         $this->inlineDocBlockParser = $inlineDocBlockParser;
+        $this->useParser        = $useParser;
+        $this->commentParser    = $commentParser;
+        $this->paramParser      = $paramParser;
+        $this->returnTypeParser = $returnTypeParser;
     }
 
     /**
@@ -68,24 +69,25 @@ class MethodParser {
             $method->addVar($variable);
         }
         if (isset($node->returnType)) {
-            if ($node->returnType instanceof Name) {
-                $method->return = $this->useParser->getFQCN($node->returnType);
-            } else {
-                $method->return = $node->returnType;
-            }
+            $method->return = $this->parseMethodReturnType($node);
         }
         return $method;
     }
     protected function parseMethodArgument(Param $node) {
         return $this->paramParser->parse($node);
     }
+    protected function parseMethodReturnType(ClassMethod $node) {
+        return $this->returnTypeParser->parse($node);
+    }
 
     /** @var UseParser $useParser */
     private $useParser;
-    /** @property CommentParser $commentParser */
+    /** @var CommentParser $commentParser */
     private $commentParser;
     /** @var ParamParser */
     private $paramParser;
     /** @var InlineDocBlockParser */
     private $inlineDocBlockParser;
+    /** @var ReturnTypeParser */
+    private $returnTypeParser;
 }
