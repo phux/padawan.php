@@ -8,6 +8,7 @@ use Padawan\Domain\Project\Node\FunctionData;
 use Padawan\Domain\Project\Node\MethodParam;
 use Padawan\Parser\CommentParser;
 use Padawan\Parser\ParamParser;
+use Padawan\Parser\ReturnTypeParser;
 use Padawan\Parser\UseParser;
 use Padawan\Parser\InlineDocBlockParser;
 
@@ -17,13 +18,16 @@ class FunctionTransformer
         CommentParser $commentParser,
         ParamParser $paramParser,
         UseParser $useParser,
+        ReturnTypeParser $returnTypeParser,
         InlineDocBlockParser $inlineDocBlockParser
     ) {
-        $this->commentParser        = $commentParser;
-        $this->paramParser          = $paramParser;
-        $this->useParser            = $useParser;
+        $this->commentParser = $commentParser;
+        $this->paramParser = $paramParser;
+        $this->returnTypeParser = $returnTypeParser;
+        $this->useParser = $useParser;
         $this->inlineDocBlockParser = $inlineDocBlockParser;
     }
+
     public function tranform(Function_ $node)
     {
         $function = new FunctionData($node->name);
@@ -38,6 +42,10 @@ class FunctionTransformer
         $variables = $this->inlineDocBlockParser->parse($node);
         foreach ($variables as $variable) {
             $function->addVar($variable);
+        }
+
+        if (!isset($function->return) && isset($node->returnType)) {
+            $function->return = $this->tranformReturnType($node);
         }
         return $function;
     }
@@ -64,6 +72,10 @@ class FunctionTransformer
     protected function tranformArgument(Param $node)
     {
         return $this->paramParser->parse($node);
+    }
+    protected function tranformReturnType(Function_ $node)
+    {
+        return $this->returnTypeParser->parse($node);
     }
 
     private $paramParser;

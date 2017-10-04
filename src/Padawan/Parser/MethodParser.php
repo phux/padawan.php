@@ -64,11 +64,12 @@ class MethodParser {
                 $method->addParam($this->parseMethodArgument($child));
             }
         }
+
         $variables = $this->inlineDocBlockParser->parse($node);
         foreach ($variables as $variable) {
             $method->addVar($variable);
         }
-        if (isset($node->returnType)) {
+        if (!isset($method->return) && isset($node->returnType)) {
             $method->return = $this->parseMethodReturnType($node);
         }
         return $method;
